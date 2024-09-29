@@ -32,28 +32,8 @@ def download_urls(dload_urls, DEST_FOLDER, JD_LOCALHOST=r"http://127.0.0.1:3128/
     # HACK: Add a link and download if downloader is running
     if response.status_code == 200:
         print("===" * 15)
-
-        # HACK: POSTMAN -> This works perfectly
-
         # endpoint -> http://127.0.0.1:3128/linkgrabberv2/addLinks
-
         # body (not parameters) -> Python requests : data => body | params => paremeters
-        # {
-        #     "params": [
-        #         {
-        #             "assignJobID": true,
-        #             "autoExtract": false,
-        #             "autostart": true,
-        #             "deepDecrypt": false,
-        #             "destinationFolder": "C:\\Users\\harsh\\Videos\\Youtube",
-        #             "links": "https://www.youtube.com/watch?v=SR__amDl1c8",
-        #             "overwritePackagizerRules": true,
-        #             "priority": "DEFAULT",
-        #         }
-        #     ]
-        # }
-
-        # Linkgrabberv2 in python doesn't work
         add_links_url = JD_LOCALHOST + "linkgrabberv2/addLinks"
         dload_payload = {
             "params": [
@@ -80,15 +60,14 @@ def download_urls(dload_urls, DEST_FOLDER, JD_LOCALHOST=r"http://127.0.0.1:3128/
             print(f"> Download request output: {json_response}")
             print("===" * 15)
 
-        
-
-        # print("===" * 15)
-        # print(json_response)
+        print("===" * 15)
+        print(json_response)
         return (json_response["data"]["id"], response.status_code)
 
+        # return None
 
 
-# TODO: Function to regularly detect changes in a youtube playlist
+# HACK: Function to regularly detect changes in a youtube playlist
 def detect_playlist_changes(
     API_KEY, playlistId, LOCAL_PLAYLIST_DIR, JD_LOCALHOST=r"http://127.0.0.1:3128/"
 ) -> bool:
@@ -140,8 +119,6 @@ def detect_playlist_changes(
         print("> An error occured while storing API resonse!")
     print("===" * 15)
 
-    # TODO: Iterate over all videos and
-    # trigger downloads for those not present in local directory
 
     item_list = json_response["items"]
     item_count = 0
@@ -171,8 +148,6 @@ def detect_playlist_changes(
                 video_id = item_snippet["resourceId"]["videoId"]
                 video_path = playlist_path + f"\\{video_title}"
 
-                # TODO: Trigger the download of above video link in jdownloader
-                # at specified location
 
                 if not (os.path.exists(video_path)):
                     video_url = "https://www.youtube.com/watch?v=" + video_id
@@ -195,7 +170,7 @@ def detect_playlist_changes(
                             }
                         )
                     else:
-                        added_dloads.append((video_dload_jobId, 1))
+                        added_dloads.append([video_dload_jobId, 1])
                         print("Done.")
                 else:
                     print("> Video present at destination.")
@@ -204,52 +179,105 @@ def detect_playlist_changes(
 
             item_count += 1
 
-    
-    print("==="*15)
+    print("===" * 15)
     print("Waiting to begin link status check...", end="")
     sleep(25)
     print("complete. Starting now!")
-    print("==="*15)
-    # # TODO: Check the links that have started downloading. POP THEM
+    print("===" * 15)
 
     dloads_started = deque([])
 
     while added_dloads:
         print("> Scanning Link Grabber for pending items...")
         query_url = JD_LOCALHOST + "/linkgrabberv2/queryLinks"
-        payload = {"queryParams": {"jobUUIDs":[str(added_dloads[0])]}}
+        payload = {"queryParams": {"jobUUIDs": [str(added_dloads[0])]}}
         response = requests.get(query_url, params=json.dumps(payload))
         json_response = response.json()
-
 
         if response.status_code != 200:
             print("> Error scanning items in linkgrabber.")
         else:
-            
-            if len(json_response['data']) > 0:
+
+            if len(json_response["data"]) > 0:
                 # Item is still in linkgrabber
                 round = added_dloads[0][1]
                 round += 1
                 if round > 2:
                     print("> Add provision to shift into force download.")
-                    # TODO: Items not erroring out, initiate force download and shift to dload_list
-                    print("> Add provision to handle error occuring")
-                    # TODO: Add provision to handle items which are erroring out
-                    # Add them to erred items and pop from added_dloads
+                    move_to_dload_list_url = JD_LOCALHOST + "/linkgrabberv2/moveToDownloadlist"
+                    payload = {
+                        "linkIds":[added_dloads[0][0]]
+                    }
+                    response = requests.get(move_to_dload_list_url, params=json.dumps(payload))
+                    if response.status_code == 200:
+                        print("> Add provision to handle error occuring")
+                        # TODO: Add provision to handle items which are erroring out
+                        # Add them to erred items and pop from added_dloads
+                        erred_dload = added_dloads.popleft()
+                        erred_dloads.append(erred_dload)
                 else:
                     link = added_dloads.popleft()
                     added_dloads.append(link)
             else:
-                # Job is not present in linkgrabber 
+                # Job is not present in linkgrabber
                 dloading = added_dloads.popleft()
                 dloads_started.append(dloading)
-    
-    print("> Linkgrabber Empty.")
 
-    # Now check download list for all items:
-        # if (): # Download started
-        #     added_dloads.popleft()
-        # else ():    # Attempt force download
+    print("> Linkgrabber Empty.")
+    print("===" * 15)
+    print("> Beginning scan of downloader...")
+    # Now check download list for presense of all items:
+    while dloads_started:
+
+        query_url = JD_LOCALHOST + "downloadsV2/queryLinks"
+        payload = {
+            "queryParams": {
+                "availability": True,
+                "bytesTotal": True,
+                "enabled": True,
+                "status": True,
+                "bytesLoaded": True,
+                "eta": True,
+                "jobUUIDs": [dloads_started[0][0]],
+                "finished": True,
+            }
+        }
+        response = requests.get(query_url, params=json.dumps(payload))
+        json_response = response.json()
+
+        # print(response.status_code)
+        # pprint(response.json())
+        if response.status_code != 200:
+            print("> Error scanning items in downloader.")
+        else:
+            sub_packages = json_response["data"]
+            count_sub_total = len(sub_packages)
+
+
+            for sub_package in sub_packages:
+                if ("status" not in sub_package.keys()):
+                    continue
+                if (dloads_started[0][1] >= -1) and ((sub_package["status"]=="Download") or (sub_package["status"]=="Finished")):
+                    count_sub_total -= 1
+            
+            dloads_started[0][1] -= 1
+            if (count_sub_total == 0):
+                # Download completed
+                dloads_started.popleft()
+            
+            elif (count_sub_total != 0) and (dloads_started[0][1] < -1):
+                # Put into errored category
+                erred_dload = dloads_started.popleft()
+                erred_dloads.append(erred_dload)
+            else:
+                # Give it one more chance
+                retry_dload = dloads_started.popleft()
+                dloads_started.append(retry_dload)
+
+
+            
+
+    print("> Sanity check complete!")
 
     print("+++" * 15)
     print("> \tPLAYLIST SYNC COMPLETE.")
@@ -270,10 +298,15 @@ def detect_playlist_changes(
 
 # TODO: Regularly perform downloads
 
+
+# TODO: (OPTIONAL - BACKUP BEFORE PROCEEDING!)OVERHAUL TO HEAVY API USAGE
+
+
 if __name__ == "__main__":
-    urls = r"https://www.youtube.com/watch?v=SR__amDl1c8"
+    urls = r"https://www.fullvideos.xxx/get_file/8512/320ff449d0e2c50b9d4e5c579d08022febeb932712/93758000/93758142/93758142_720m.mp4/"
     API_KEY = r"AIzaSyAbfXRWxZ-EujvNmfHaFxE0TZgIOwmNr3g"
     # download_urls(dload_urls=urls, DEST_FOLDER="C:\\Users\\harsh\\Videos\\Youtube")
+    # TEST PLAYLIST --> playlistID = r"PLAt1ye6EzsnsNPpE1njHtc7Yg8h2OKNT4"
     playlistID = r"PLvkrU3vRXLfzaqM8QIK_NXPkhidjDdEMn"
     LOCAL_PLAYLIST_LOCATION = "C:\\Users\\harsh\\Videos\\Youtube"
     detect_playlist_changes(API_KEY=API_KEY, playlistId=playlistID, LOCAL_PLAYLIST_DIR=LOCAL_PLAYLIST_LOCATION)
